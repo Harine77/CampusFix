@@ -1,0 +1,2 @@
+-- Optional sample users are created by `npm run db:seed` after setting SEED_PASSWORD.
+-- This file intentionally contains no default passwords or production accounts.

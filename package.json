@@ -1,0 +1,18 @@
+{
+  "name": "campusfix",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Campus complaint and maintenance management system",
+  "workspaces": ["server", "client"],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm --workspace server run dev",
+    "dev:client": "npm --workspace client run dev",
+    "start": "npm --workspace server start",
+    "build": "npm --workspace client run build",
+    "db:init": "npm --workspace server run db:init",
+    "admin:create": "npm --workspace server run admin:create",
+    "staff:create": "npm --workspace server run staff:create"
+  },
+  "devDependencies": { "concurrently": "^9.2.1" }
+}
