@@ -1,4 +1,5 @@
 import { pool, inTransaction } from '../config/db.js';
+import { canTransitionStatus } from '../domain/complaintWorkflow.js';
 
 const fields = `c.id, c.title, c.description, c.category, c.location, c.priority, c.status, c.reporter_id, r.name AS reporter_name, c.assigned_staff_id, s.name AS staff_name, c.resolution_comment, c.rejection_reason, c.created_at, c.updated_at`;
 
@@ -33,11 +34,6 @@ export async function getComplaint(id) {
   return { ...rows[0], history: history.rows, assignments: assignments.rows };
 }
 
-export async function getAccessRow(id) {
-  const { rows } = await pool.query('SELECT id, reporter_id, assigned_staff_id, status FROM complaints WHERE id=$1', [id]);
-  return rows[0];
-}
-
 export async function assignComplaint(id, staffId, adminId) {
   return inTransaction(async (db) => {
     const { rows } = await db.query('SELECT * FROM complaints WHERE id=$1 FOR UPDATE', [id]);
@@ -62,7 +58,7 @@ export async function updateStatus(id, actorId, staffId, status, comment) {
     const complaint = rows[0];
     if (!complaint) return { missing: true };
     if (String(complaint.assigned_staff_id) !== String(staffId)) return { forbidden: true };
-    const valid = complaint.status === 'Assigned' && status === 'In Progress' || complaint.status === 'In Progress' && status === 'Resolved';
+    const valid = canTransitionStatus(complaint.status, status);
     if (!valid) return { invalidStatus: true, current: complaint.status };
     if (status === 'Resolved') await db.query("UPDATE complaints SET status=$2, resolution_comment=$3, updated_at=NOW() WHERE id=$1", [id, status, comment]);
     else await db.query("UPDATE complaints SET status=$2, updated_at=NOW() WHERE id=$1", [id, status]);

@@ -14,7 +14,7 @@ CampusFix is a PERN campus maintenance workflow: students report issues, adminis
    ```sql
    CREATE DATABASE campusfix WITH ENCODING 'UTF8' TEMPLATE template0;
    ```
-2. Copy `server/.env.example` to `server/.env`. Set `DATABASE_URL` to a working PostgreSQL connection string and set `JWT_SECRET` to a random secret of at least 32 characters. Set `CLIENT_ORIGIN` to the Vite origin if it differs from `http://localhost:5173`.
+2. Copy `server/.env.example` to `server/.env`. Set `DATABASE_URL` to a working PostgreSQL connection string and set `JWT_SECRET` to a random secret of at least 32 characters. `CLIENT_ORIGINS` is a comma-separated allowlist; keep the Vite origin in it (defaults include ports 5173 and 5174).
 3. From the repository root run `npm install`, then `npm run db:init` to create the schema. Initialization is safe to rerun.
 4. Create the first admin interactively with `npm run admin:create`. The password is entered in the terminal and hashed before it is stored. Never expose this command as a public endpoint.
 5. Create maintenance staff accounts interactively with `npm run staff:create`. Public registration creates students only.

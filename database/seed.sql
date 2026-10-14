@@ -1,2 +1,3 @@
--- Optional sample users are created by `npm run db:seed` after setting SEED_PASSWORD.
--- This file intentionally contains no default passwords or production accounts.
+-- CampusFix intentionally has no seeded users or default passwords.
+-- Create the schema with `npm run db:init`, then provision privileged accounts
+-- interactively with `npm run admin:create` and `npm run staff:create`.

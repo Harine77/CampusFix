@@ -1,13 +1,31 @@
 const API = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 let token = null;
 export const setToken = (value) => { token = value; };
+
+// OOP example: a typed API exception keeps HTTP context alongside the message.
+export class ApiError extends Error {
+  constructor(message, { status = null, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 export async function request(path, options = {}) {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers }
-  });
+  let response;
+  try {
+    response = await fetch(`${API}${path}`, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers }
+    });
+  } catch (cause) {
+    throw new ApiError('Cannot reach the CampusFix API. Check that the server is running and the API URL is correct.', { cause });
+  }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) { if (response.status === 401) window.dispatchEvent(new Event('campusfix:unauthorized')); throw new Error(data.error || 'Request failed. Please try again.'); }
+  if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('campusfix:unauthorized'));
+    throw new ApiError(data.error || 'Request failed. Please try again.', { status: response.status });
+  }
   return data;
 }
 export const api = {

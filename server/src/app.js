@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config/env.js';
-import { AppError } from './middleware/errors.js';
+import { createHttpError } from './middleware/errors.js';
 import authRoutes from './routes/authRoutes.js';
 import complaintRoutes from './routes/complaintRoutes.js';
 import { errorHandler, notFound } from './middleware/errors.js';
@@ -10,11 +10,11 @@ import { errorHandler, notFound } from './middleware/errors.js';
 const app = express();
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors({ origin: config.clientOrigin, methods: ['GET', 'POST', 'PATCH'], allowedHeaders: ['Content-Type', 'Authorization'] }));
+app.use(cors({ origin: config.clientOrigins, methods: ['GET', 'POST', 'PATCH'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 app.use(express.json({ limit: '32kb' }));
 app.use((req, _res, next) => {
   if (['POST', 'PATCH'].includes(req.method) && (!req.body || typeof req.body !== 'object' || Array.isArray(req.body))) {
-    return next(new AppError(400, 'Send request data as a JSON object.'));
+    return next(createHttpError(400, 'Send request data as a JSON object.'));
   }
   next();
 });
