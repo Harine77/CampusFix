@@ -1,14 +1,24 @@
 import { pool, inTransaction } from '../config/db.js';
 import { canTransitionStatus } from '../domain/complaintWorkflow.js';
 
-const fields = `c.id, c.title, c.description, c.category, c.location, c.priority, c.status, c.reporter_id, r.name AS reporter_name, c.assigned_staff_id, s.name AS staff_name, c.resolution_comment, c.rejection_reason, c.created_at, c.updated_at`;
+const fields = `c.id, c.title, c.description, c.category, c.location, c.priority, c.status, c.reporter_id, r.name AS reporter_name, c.assigned_staff_id, s.name AS staff_name, c.resolution_comment, c.rejection_reason, c.photo_filename IS NOT NULL AS has_photo, c.created_at, c.updated_at`;
 
-export async function createComplaint(input, reporterId) {
+export async function createComplaint(input, reporterId, photoFilename = null) {
   return inTransaction(async (db) => {
-    const { rows } = await db.query('INSERT INTO complaints (title, description, category, location, reporter_id) VALUES ($1,$2,$3,$4,$5) RETURNING *', [input.title, input.description, input.category, input.location, reporterId]);
+    const { rows } = await db.query('INSERT INTO complaints (title, description, category, location, reporter_id, photo_filename) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, title, description, category, location, priority, status, reporter_id, photo_filename IS NOT NULL AS has_photo, created_at, updated_at', [input.title, input.description, input.category, input.location, reporterId, photoFilename]);
     await db.query("INSERT INTO complaint_history (complaint_id, actor_id, event_type, new_value) VALUES ($1,$2,'status','Submitted')", [rows[0].id, reporterId]);
     return rows[0];
   });
+}
+
+export async function findDuplicateCandidates(category) {
+  const { rows } = await pool.query("SELECT id, title, description, category, location, status FROM complaints WHERE category=$1 AND status <> 'Rejected' ORDER BY updated_at DESC LIMIT 250", [category]);
+  return rows;
+}
+
+export async function getComplaintPhotoRecord(id) {
+  const { rows } = await pool.query('SELECT id, reporter_id, assigned_staff_id, photo_filename FROM complaints WHERE id=$1', [id]);
+  return rows[0] || null;
 }
 
 export async function listComplaints(user, filters) {
@@ -95,6 +105,48 @@ export async function dashboard() {
   const { rows } = await pool.query(`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE status='Submitted')::int AS submitted, COUNT(*) FILTER (WHERE status='Assigned')::int AS assigned, COUNT(*) FILTER (WHERE status='In Progress')::int AS in_progress, COUNT(*) FILTER (WHERE status='Resolved')::int AS resolved, COUNT(*) FILTER (WHERE status='Rejected')::int AS rejected FROM complaints`);
   const { rows: categoryRows } = await pool.query('SELECT category, COUNT(*)::int AS count FROM complaints GROUP BY category ORDER BY count DESC');
   return { ...rows[0], categories: categoryRows };
+}
+
+// One atomic update claims each newly overdue complaint before writing its audit event.
+// Repeated/concurrent sweeps only return records whose escalation flag was still false.
+export async function escalateOverdueComplaints(thresholdDays) {
+  return inTransaction(async (db) => {
+    const { rows } = await db.query(`
+      UPDATE complaints
+      SET is_escalated=TRUE, escalated_at=COALESCE(escalated_at, NOW())
+      WHERE is_escalated=FALSE
+        AND status IN ('Submitted', 'Assigned', 'In Progress')
+        AND created_at < NOW() - make_interval(days => $1::int)
+      RETURNING id
+    `, [thresholdDays]);
+
+    for (const { id } of rows) {
+      await db.query(`
+        INSERT INTO complaint_history (complaint_id, actor_id, event_type, new_value, comment)
+        VALUES ($1, NULL, 'escalation', 'Escalated', $2)
+      `, [id, `Automatically escalated after more than ${thresholdDays} days unresolved.`]);
+    }
+    return rows.length;
+  });
+}
+
+export async function listEscalatedComplaints(filters) {
+  const conditions = ["c.is_escalated=TRUE", "c.status IN ('Submitted', 'Assigned', 'In Progress')"];
+  const values = [];
+  if (filters.priority) { values.push(filters.priority); conditions.push(`c.priority=$${values.length}`); }
+  if (filters.status) { values.push(filters.status); conditions.push(`c.status=$${values.length}`); }
+  const sortColumns = { age_desc: 'c.created_at ASC', age_asc: 'c.created_at DESC' };
+  const orderBy = sortColumns[filters.sort] || sortColumns.age_desc;
+  const { rows } = await pool.query(`
+    SELECT c.id, c.title, c.category, c.priority, c.location, c.status,
+      c.created_at, c.escalated_at, s.name AS staff_name,
+      FLOOR(EXTRACT(EPOCH FROM (NOW() - c.created_at)) / 86400)::int AS days_pending
+    FROM complaints c
+    LEFT JOIN users s ON s.id=c.assigned_staff_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${orderBy}, c.id DESC
+  `, values);
+  return rows;
 }
 
 export async function listStaff() {

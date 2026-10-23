@@ -49,6 +49,8 @@ export function errorHandler(error, _req, res, _next) {
   else if (['23503', '23514', '22P02'].includes(error.code)) error = createHttpError(400, 'The submitted information is invalid.', { cause: error });
   else if (error.type === 'entity.parse.failed') error = createHttpError(400, 'The request body contains invalid JSON.', { cause: error });
   else if (error.type === 'entity.too.large') error = createHttpError(413, 'The request body is too large.', { code: 'PAYLOAD_TOO_LARGE', cause: error });
+  else if (error.name === 'MulterError' && error.code === 'LIMIT_FILE_SIZE') error = createHttpError(413, 'Photo evidence must be 5 MB or smaller.', { cause: error });
+  else if (error.name === 'MulterError') error = createHttpError(400, 'The photo upload is invalid. Upload one JPEG, PNG, or WebP image.', { cause: error });
 
   if (!(error instanceof AppError)) {
     console.error(error);

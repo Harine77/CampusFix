@@ -379,17 +379,46 @@ Complaint list query filters supported by the API: `search`, `status`, `category
 
 ## 7. Design patterns and engineering practices used
 
-These are architectural patterns in the code, not claims that a specific Gang of Four class hierarchy was added.
+These patterns are implemented in the repository and can be pointed out directly in a review.
 
 1. **Layered architecture / MVC-style separation:** routes, controllers, services, models, validators, and middleware divide responsibilities. The controller is the HTTP adapter; the service owns business rules; models own SQL.
 2. **Service layer:** `authService` orchestrates validation, hashing, persistence, and token issuance. `complaintService` orchestrates validation, actor identity, ownership, and workflow outcomes.
 3. **Data Access Object (DAO)-style modules:** `authModel` and `complaintModel` centralize database reads/writes and hide SQL from UI/controllers. They are simple modules rather than a generic ORM/repository framework.
-4. **Middleware pipeline / chain of responsibility:** Express applies security headers, CORS, JSON parsing, auth, role authorization, routes, 404 handling, and centralized errors in sequence.
-5. **Dependency boundary:** React components call `client/src/api.js`; controllers call service modules; services call model modules. This keeps network/SQL details from spreading through components.
-6. **Unit of Work / transaction boundary:** `inTransaction` groups complaint creation + initial history and other related updates so partial writes roll back.
-7. **Validation at multiple boundaries:** browser form constraints improve usability; server validators are authoritative; database checks and foreign keys protect stored data.
+4. **Factory Pattern for HTTP errors:** `createHttpError(status, message, options)` in `server/src/middleware/errors.js` creates the matching typed exception for common HTTP statuses. The error handler uses it when translating PostgreSQL/parser errors; `server/src/app.js` uses it for invalid JSON object bodies. This keeps creation and status metadata consistent.
+5. **Strategy Pattern for status transitions:** `server/src/domain/complaintWorkflow.js` defines one transition function per current status. `canTransitionStatus(currentStatus, nextStatus)` selects the strategy. `complaintModel.updateStatus` calls it after locking/loading the complaint, so only `Assigned → In Progress` and `In Progress → Resolved` are allowed. Adding a workflow path means adding/updating a strategy rather than expanding nested conditionals.
+6. **Middleware pipeline / chain of responsibility:** Express applies security headers, CORS, JSON parsing, authentication, role authorization, routes, 404 handling, and centralized errors in sequence. A failure is passed down the Express error-middleware path to `errorHandler`.
+7. **Dependency boundary / API facade:** React components call the shared functions in `client/src/api.js` rather than constructing fetch requests themselves; controllers call services; services call models. The API object gives screens one consistent interface for backend operations.
+8. **Unit of Work / transaction boundary:** `inTransaction` groups complaint creation + initial history and lifecycle updates so related writes commit together or roll back together.
+9. **Validation at multiple boundaries:** browser form constraints improve usability; server validators are authoritative; database checks and foreign keys protect stored data.
 
-No classic Singleton/Factory/Observer framework has been added, and none is needed for this app's scope. The React auth context is a shared state provider, not a persisted server session. If asked “what pattern did you use?”, lead with layered architecture, service layer, DAO-style data access, and transaction boundary.
+The React auth context is shared UI state, not a persisted server session. For a short viva answer, lead with layered architecture/service layer, then point to the explicit Factory and Strategy implementations above.
+
+### OOP concepts and the exact code
+
+The app uses a small amount of object-oriented JavaScript where it helps represent errors. The rest of the backend stays modular and function-based.
+
+| OOP concept | Where it is implemented | How to explain it |
+|---|---|---|
+| Class and inheritance | `server/src/middleware/errors.js`: `AppError extends Error`; `ValidationError`, `AuthenticationError`, `AuthorizationError`, `NotFoundError`, and `ConflictError` extend `AppError`. `client/src/api.js`: `ApiError extends Error`. | These classes specialize JavaScript's base `Error` with HTTP status and application metadata. Specific classes encode the meaning of common failures. |
+| Encapsulated error data | The error constructors put message, status, code, operational flag, and optional cause on one error instance. | A caller passes/throws one error object instead of separately passing status and message through every layer. Constructors provide the shared setup. |
+| Polymorphic handling | `errorHandler` in `server/src/middleware/errors.js` checks `error instanceof AppError`, then safely handles any subclass using the common status/message interface. | The handler does not need a separate response function for every error subclass. Each subclass can be handled through its parent type. |
+| Error causes | `AppError` and `ApiError` accept an optional `cause`. PostgreSQL/parser failures are retained as causes when translated to safe application errors. | The underlying error stays linked on the error object for debugging; the API response serializes only the safe message, not the cause. |
+
+### Exception handling: where failures go
+
+| Failure | Origin / handling file | Result |
+|---|---|---|
+| Invalid registration or complaint data | `server/src/validators/auth.js` and `server/src/validators/complaints.js` throw `ValidationError`. | The Express error middleware returns HTTP 400 and a useful validation message. No insert is reached when validation fails. |
+| Wrong login credentials | `server/src/services/authService.js` throws `AuthenticationError` using the same message for unknown email and incorrect password. | HTTP 401 with a generic message that does not reveal whether an account exists. |
+| Missing/expired JWT or wrong role | `server/src/middleware/auth.js` throws/forwards `AuthenticationError` or `AuthorizationError`. | HTTP 401 or 403; protected controller logic does not run. |
+| Invalid JSON object shape | `server/src/app.js` creates a 400 error with `createHttpError`. Malformed JSON emitted by `express.json()` is recognized by `errorHandler`. | HTTP 400 with a safe message. |
+| Request body exceeds configured parser limit | Express JSON parser error is recognized in `server/src/middleware/errors.js`. | HTTP 413 with a safe message. The body limit is configured in `server/src/app.js`. |
+| PostgreSQL constraint error | `errorHandler` translates known codes: `23505` (unique) to 409; `23503`, `23514`, and `22P02` to 400. | Client receives a safe message; SQL internals are not exposed. |
+| Unexpected backend exception | Async route/controller rejection reaches `errorHandler` (Express 5 forwards rejected async handlers). | Details are logged server-side and client receives generic HTTP 500 JSON. |
+| API/network failure in browser | `request` in `client/src/api.js` wraps fetch failures in `ApiError`; non-2xx responses also become `ApiError` with their HTTP status. | Screens catch the error and show feedback. HTTP 401 also emits `campusfix:unauthorized`, which clears the in-memory session in `client/src/App.jsx`. |
+| Related database write fails | `inTransaction` in `server/src/config/db.js` rolls back the transaction on error. Complaint plus initial history, and lifecycle changes plus their history, cannot be left half-written. | The exception continues to centralized handling after rollback. |
+
+`server/tests/errors.test.js` covers the error subclasses, Factory Pattern, Strategy Pattern, parser/database translations, and safe 500 responses. `server/tests/validators.test.js` covers request validation.
 
 ---
 
