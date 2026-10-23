@@ -4,23 +4,6 @@ CampusFix is a full-stack web application that streamlines campus maintenance re
 
 Instead of relying on informal communication, CampusFix maintains a structured complaint lifecycle with role-based access, persistent database records, and an auditable history of important changes.
 
-## Table of Contents
-
-- [Problem Statement](#problem-statement)
-- [Objectives](#objectives)
-- [Key Features](#key-features)
-- [Technology Stack](#technology-stack)
-- [System Architecture](#system-architecture)
-- [Complaint Lifecycle](#complaint-lifecycle)
-- [Database Design](#database-design)
-- [Project Structure](#project-structure)
-- [Prerequisites](#prerequisites)
-- [Installation and Setup](#installation-and-setup)
-- [Running the Application](#running-the-application)
-- [Testing](#testing)
-- [Security and Engineering Practices](#security-and-engineering-practices)
-- [Limitations and Future Enhancements](#limitations-and-future-enhancements)
-
 ## Problem Statement
 
 Campus maintenance issues such as faulty electrical equipment, damaged furniture, water leakage, and network connectivity problems are often reported through informal channels. This can make it difficult to assign responsibility, monitor progress, maintain records, and ensure accountability.
@@ -141,6 +124,26 @@ flowchart TD
 
 Invalid or out-of-scope complaints can be rejected by an administrator with a recorded reason. Authorized workflow transitions are enforced on the server.
 
+## REST API overview
+
+Base URL: `http://localhost:4000/api`. Except registration, login, and health, requests require `Authorization: Bearer <JWT>`. Request and response bodies are JSON; errors use `{ "error": "message" }`.
+
+| Method | Path | Access | Purpose |
+|---|---|---|---|
+| `GET` | `/health` | Public | API health check |
+| `POST` | `/auth/register` | Public, rate-limited | Register student |
+| `POST` | `/auth/login` | Public, rate-limited | Verify credentials and issue JWT |
+| `GET` | `/auth/me` | Authenticated | Return verified token identity |
+| `POST` | `/complaints` | Student | Create complaint; reporter comes from JWT |
+| `GET` | `/complaints` | Authenticated | Role-scoped list; filters: search, status, category, priority, location |
+| `GET` | `/complaints/:id` | Authenticated, record access checked | Complaint details, history, and assignments |
+| `GET` | `/complaints/dashboard` | Admin | Live database counts |
+| `GET` | `/complaints/staff` | Admin | Staff list for assignment |
+| `POST` | `/complaints/:id/assign` | Admin | Assign/reassign with `{ "staffId": 12 }` |
+| `POST` | `/complaints/:id/reject` | Admin | Reject with `{ "reason": "..." }` |
+| `PATCH` | `/complaints/:id/priority` | Admin | Change priority with `{ "priority": "High" }` |
+| `PATCH` | `/complaints/:id/status` | Assigned staff | Set `In Progress` or `Resolved` with a required comment |
+
 ## Database Design
 
 CampusFix uses PostgreSQL as its source of truth.
@@ -232,115 +235,61 @@ npm --version
 psql --version
 ```
 
-## Installation and Setup
+## Run locally
 
-### 1. Clone the repository
+### 1. Create a PostgreSQL database
 
-```bash
-git clone https://github.com/Harine77/CampusFix.git
-cd CampusFix
-```
-
-### 2. Install dependencies
-
-Run this command from the repository root:
-
-```bash
-npm install
-```
-
-The project uses npm workspaces for the client and server.
-
-### 3. Create the PostgreSQL database
-
-Open PostgreSQL using your preferred client and create a database:
+Run this in `psql` or pgAdmin as a PostgreSQL administrator:
 
 ```sql
-CREATE DATABASE campusfix
-WITH ENCODING 'UTF8'
-TEMPLATE template0;
+CREATE DATABASE campusfix WITH ENCODING 'UTF8' TEMPLATE template0;
 ```
 
-If you use a different database name, update the connection configuration accordingly.
+### 2. Configure the API
 
-### 4. Configure environment variables
+Copy `server/.env.example` to `server/.env` and set values for your environment:
 
-Copy the server environment template:
-
-**Windows PowerShell**
-
-```powershell
-Copy-Item server/.env.example server/.env
+```dotenv
+PORT=4000
+CLIENT_ORIGINS=http://localhost:5173,http://localhost:5174
+DATABASE_URL=postgres://postgres:YOUR_DATABASE_PASSWORD@localhost:5432/campusfix
+JWT_SECRET=replace-with-a-random-secret-of-at-least-32-characters
+JWT_EXPIRES_IN=2h
 ```
 
-**Linux or macOS**
+Use your PostgreSQL username/password, and set a unique random JWT secret of at least 32 characters. URL-encode reserved characters in the database password if needed. Do not commit or share `.env` files.
 
-```bash
-cp server/.env.example server/.env
+`CLIENT_ORIGINS` is the comma-separated browser-origin allowlist. The frontend defaults to `http://localhost:4000/api`. If the API is hosted elsewhere, create `client/.env` with:
+
+```dotenv
+VITE_API_URL=https://your-api-host.example/api
 ```
 
-Update `server/.env` with your PostgreSQL connection details and a strong, randomly generated JWT secret of at least 32 characters.
+Vite reads `VITE_API_URL` when starting or building the client.
 
-Set `CLIENT_ORIGIN` to `http://localhost:5173` unless your frontend runs at a different origin.
-
-Do not commit `server/.env` or publish database credentials and secrets.
-
-### 5. Initialize the database
+### 3. Install, initialize, provision accounts
 
 From the repository root:
 
-```bash
+```sh
+npm install
 npm run db:init
-```
-
-This initializes the database schema using the project's database initialization script.
-
-### 6. Create administrator and staff accounts
-
-Create the first administrator interactively:
-
-```bash
 npm run admin:create
-```
-
-Create a maintenance staff account:
-
-```bash
 npm run staff:create
 ```
 
-Follow the terminal prompts to configure the accounts. The project provisions these privileged roles through commands rather than public registration.
+The account commands prompt interactively; passwords are hashed before insertion. Public registration creates students only. There are no seeded demo credentials. `database/seed.sql` documents that no users are seeded. `npm run db:init` applies `database/schema.sql`; the schema is safe to reapply for initial setup, but this project does not have a versioned migration system.
 
-## Running the Application
+### 4. Start the app
 
-### Development mode
-
-From the repository root, run:
-
-```bash
+```sh
 npm run dev
 ```
 
-The command starts the frontend and backend development processes together.
+- Frontend: <http://localhost:5173>
+- API health check: <http://localhost:4000/api/health>
 
-- **Frontend:** http://localhost:5173
-- **Backend health endpoint:** http://localhost:4000/api/health
-
-### Production build
-
-Build the React frontend:
-
-```bash
-npm run build
-```
-
-Start the API server:
-
-```bash
-npm start
-```
-
-For a production deployment, serve the generated frontend build through an appropriately configured web server and route API requests to the backend. Configure production environment variables, HTTPS, and secure deployment settings before exposing the application publicly.
+If Vite selects a different port because 5173 is occupied, add that exact origin to `CLIENT_ORIGINS` and restart the API if the browser reports a CORS error
 
 ## Testing
 
